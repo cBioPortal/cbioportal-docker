@@ -7,45 +7,42 @@
 FROM tomcat:8-jre8
 MAINTAINER Fedde Schaeffer <fedde@thehyve.nl>
 
-# install build and runtime dependencies
+# install build and runtime dependencies and configure Tomcat for production
 RUN apt-get update && apt-get install -y --no-install-recommends \
 		git \
 		libmysql-java \
+		maven \
+		openjdk-8-jdk \
 		patch \
 		python \
 		python-jinja2 \
 		python-mysqldb \
 		python-requests \
-	# install new versions of these packages backported to Debian stable;
-	# Debian does not add new features or break backwards compatibility within
-	# a stable release, but for these dependencies we need versions that do.
-	&& apt-get install -y --no-install-recommends -t jessie-backports \
-		maven \
-		openjdk-8-jdk \
 	&& rm -rf /var/lib/apt/lists/* \
-	# set up Tomcat to use the MySQL Connector/J Java connector
 	&& ln -s /usr/share/java/mysql-connector-java.jar "$CATALINA_HOME"/lib/ \
-	# remove webapps that come with Tomcat for security reasons
 	&& rm -rf $CATALINA_HOME/webapps/*m* 
 	
 
 # fetch the cBioPortal sources and version control metadata
 ENV PORTAL_HOME=/cbioportal
-RUN git clone --single-branch -b v1.3.1 'https://github.com/cBioPortal/cbioportal.git' $PORTAL_HOME
+RUN git clone --depth 1 -b v1.14.0 'https://github.com/cBioPortal/cbioportal.git' $PORTAL_HOME
 WORKDIR $PORTAL_HOME
 
-#RUN git fetch https://github.com/thehyve/cbioportal.git uniprot_accession_in_maf_rebased \
-#       && git checkout FETCH_HEAD
+#RUN git fetch --depth 1 https://github.com/thehyve/cbioportal.git my_development_branch \
+#       && git checkout commit_hash_in_branch
 
 # add buildtime configuration
-COPY ./portal.properties.patch /root/
+COPY ./portal.properties src/main/resources/portal.properties
+COPY ./log4j.properties src/main/resources/log4j.properties
 
-# install default config files, build and install
-RUN cp src/main/resources/portal.properties.EXAMPLE src/main/resources/portal.properties \
-	&& patch src/main/resources/portal.properties </root/portal.properties.patch \
-	&& cp src/main/resources/log4j.properties.EXAMPLE src/main/resources/log4j.properties \
-	&& mvn -DskipTests clean install \
-	&& mv portal/target/cbioportal-*.war $CATALINA_HOME/webapps/cbioportal.war
+# install default config files, build and install, placing the scripts jar back
+# in the target folder where import scripts expect it after cleanup
+RUN mvn -DskipTests clean package \
+	&& mv portal/target/cbioportal-*.war $CATALINA_HOME/webapps/cbioportal.war \
+	&& mv scripts/target/scripts-*.jar /root/ \
+	&& mvn clean \
+	&& mkdir scripts/target/ \
+	&& mv /root/scripts-*.jar scripts/target/
 
 # add runtime configuration
 COPY ./catalina_server.xml.patch /root/
